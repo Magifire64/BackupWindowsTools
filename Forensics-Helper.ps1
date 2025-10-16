@@ -39,9 +39,13 @@ Write-Info "Gathering forensics information..."
 #region System Information
 Write-Header "System Information"
 
-$computerInfo = Get-ComputerInfo -Property CsName,OsName,OsVersion,OsInstallDate,OsLastBootUpTime | Format-List | Out-String
-Write-Host $computerInfo
-$reportContent += "=== SYSTEM INFORMATION ===`n$computerInfo"
+try {
+    $computerInfo = Get-ComputerInfo -Property CsName,OsName,OsVersion,OsInstallDate,OsLastBootUpTime -ErrorAction SilentlyContinue | Format-List | Out-String
+    Write-Host $computerInfo
+    $reportContent += "=== SYSTEM INFORMATION ===`n$computerInfo"
+} catch {
+    Write-Host "Error retrieving system information: $_" -ForegroundColor Red
+}
 
 #endregion
 
@@ -101,18 +105,16 @@ Write-Header "Software Installation History"
 try {
     Write-Info "Checking installed programs..."
     
-    $installedSoftware = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
-                        Where-Object { $_.DisplayName -ne $null } |
-                        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
-                        Sort-Object InstallDate -Descending |
-                        Format-Table -AutoSize | Out-String
+    $softwareList = @()
+    $softwareList += Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
+                     Where-Object { $_.DisplayName -ne $null } |
+                     Select-Object DisplayName, DisplayVersion, Publisher, InstallDate
     
-    $installedSoftware += Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
-                         Where-Object { $_.DisplayName -ne $null } |
-                         Select-Object DisplayName, DisplayVersion, Publisher, InstallDate |
-                         Sort-Object InstallDate -Descending |
-                         Format-Table -AutoSize | Out-String
+    $softwareList += Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                     Where-Object { $_.DisplayName -ne $null } |
+                     Select-Object DisplayName, DisplayVersion, Publisher, InstallDate
     
+    $installedSoftware = $softwareList | Sort-Object InstallDate -Descending | Format-Table -AutoSize | Out-String
     Write-Host $installedSoftware
     $reportContent += "`n=== INSTALLED SOFTWARE ===`n$installedSoftware"
     
@@ -134,15 +136,25 @@ try {
         if ($profile.Name -notin @('Public', 'Default', 'Default User', 'All Users')) {
             Write-Host "`nRecent files for user: $($profile.Name)" -ForegroundColor Yellow
             
-            $recentFiles = Get-ChildItem -Path $profile.FullName -Recurse -File -ErrorAction SilentlyContinue |
-                          Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) -and $_.Extension -in @('.txt','.doc','.docx','.pdf','.exe','.zip','.mp3','.mp4') } |
-                          Select-Object FullName, LastWriteTime, Length |
-                          Sort-Object LastWriteTime -Descending |
-                          Select-Object -First 20 |
-                          Format-Table -AutoSize | Out-String
+            # Search in common accessible directories only to avoid permission issues
+            $searchPaths = @('Desktop', 'Documents', 'Downloads', 'Pictures', 'Videos', 'Music')
+            $recentFiles = @()
             
-            Write-Host $recentFiles
-            $reportContent += "`n=== RECENT FILES FOR $($profile.Name) ===`n$recentFiles"
+            foreach ($searchPath in $searchPaths) {
+                $fullPath = Join-Path $profile.FullName $searchPath
+                if (Test-Path $fullPath) {
+                    $recentFiles += Get-ChildItem -Path $fullPath -Recurse -File -ErrorAction SilentlyContinue |
+                                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) -and $_.Extension -in @('.txt','.doc','.docx','.pdf','.exe','.zip','.mp3','.mp4') }
+                }
+            }
+            
+            $filesList = $recentFiles | Select-Object FullName, LastWriteTime, Length |
+                         Sort-Object LastWriteTime -Descending |
+                         Select-Object -First 20 |
+                         Format-Table -AutoSize | Out-String
+            
+            Write-Host $filesList
+            $reportContent += "`n=== RECENT FILES FOR $($profile.Name) ===`n$filesList"
         }
     }
     
@@ -159,13 +171,9 @@ try {
     Write-Info "Searching for media files (MP3, MP4, AVI, etc.)..."
     
     $mediaExtensions = @('*.mp3', '*.mp4', '*.avi', '*.mkv', '*.mov', '*.wmv', '*.flv', '*.wav', '*.flac')
-    $mediaFiles = @()
     
-    foreach ($ext in $mediaExtensions) {
-        $files = Get-ChildItem C:\Users -Recurse -Include $ext -File -ErrorAction SilentlyContinue |
-                Select-Object FullName, Length, LastWriteTime
-        $mediaFiles += $files
-    }
+    $mediaFiles = Get-ChildItem C:\Users -Recurse -Include $mediaExtensions -File -ErrorAction SilentlyContinue |
+                  Select-Object FullName, Length, LastWriteTime
     
     if ($mediaFiles.Count -gt 0) {
         Write-Host "Found $($mediaFiles.Count) media files:" -ForegroundColor Yellow

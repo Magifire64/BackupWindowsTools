@@ -263,8 +263,10 @@ Get-ChildItem C:\Users -Recurse -File -ErrorAction SilentlyContinue |
 Where-Object { $_.Length -gt 100MB } |
 Select-Object FullName, Length
 
-# Check browser history (Chrome example)
-Get-Content "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\History"
+# Note: Browser history databases are SQLite files
+# They require special tools to read properly
+# Check file existence:
+Test-Path "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\History"
 ```
 
 ## Time Management for Forensics
